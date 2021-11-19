@@ -6,6 +6,8 @@ rust/test/nft-candy-machine.js
 dist/
 lib/
 deploy/
+venv/
+js/packages/cli/assets/
 docs/lockup-ui/
 .DS_Store
 *~
@@ -30,3 +32,6 @@ hfuzz_workspace
 **/*.so
 **/.DS_Store
 .cache
+js/packages/web/.env
+traits
+traits-configuration.json

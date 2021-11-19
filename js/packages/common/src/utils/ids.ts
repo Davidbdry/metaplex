@@ -36,6 +36,10 @@ export const toPublicKey = (key: string | PublicKey) => {
   return result;
 };
 
+export const pubkeyToString = (key: PublicKey | null | string = '') => {
+  return typeof key === 'string' ? key : key?.toBase58() || '';
+};
+
 export interface PublicKeyStringAndAccount<T> {
   pubkey: string;
   account: AccountInfo<T>;
@@ -72,5 +76,9 @@ export const AUCTION_ID =
 
 export const METAPLEX_ID =
   'p1exdMJcjVao65QdewkaZRUnU6VPSXhus9n2GzWfh98' as StringPublicKey;
+
+export const PACK_CREATE_ID = new PublicKey(
+  'packFeFNZzMfD9aVWL7QbGz1WcU7R9zpf6pvNsw2BLu',
+);
 
 export const SYSTEM = new PublicKey('11111111111111111111111111111111');
