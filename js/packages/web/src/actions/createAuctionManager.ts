@@ -5,7 +5,6 @@ import {
   SystemProgram,
 } from '@solana/web3.js';
 import {
-  actions,
   Metadata,
   ParsedAccount,
   MasterEditionV1,
@@ -41,7 +40,9 @@ import {
   TupleNumericType,
   SafetyDepositConfig,
   ParticipationStateV2,
-} from '../models/metaplex';
+  StoreIndexer,
+} from '@oyster/common/dist/lib/models/metaplex/index';
+import { createTokenAccount } from '@oyster/common/dist/lib/actions/account';
 import { createVault } from './createVault';
 import { closeVault } from './closeVault';
 import {
@@ -50,15 +51,14 @@ import {
 } from './addTokensToVault';
 import { makeAuction } from './makeAuction';
 import { createExternalPriceAccount } from './createExternalPriceAccount';
-import { deprecatedValidateParticipation } from '../models/metaplex/deprecatedValidateParticipation';
+import { deprecatedValidateParticipation } from '@oyster/common/dist/lib/models/metaplex/deprecatedValidateParticipation';
 import { deprecatedCreateReservationListForTokens } from './deprecatedCreateReservationListsForTokens';
 import { deprecatedPopulatePrintingTokens } from './deprecatedPopulatePrintingTokens';
 import { setVaultAndAuctionAuthorities } from './setVaultAndAuctionAuthorities';
 import { markItemsThatArentMineAsSold } from './markItemsThatArentMineAsSold';
-import { validateSafetyDepositBoxV2 } from '../models/metaplex/validateSafetyDepositBoxV2';
-import { initAuctionManagerV2 } from '../models/metaplex/initAuctionManagerV2';
-
-const { createTokenAccount } = actions;
+import { validateSafetyDepositBoxV2 } from '@oyster/common/dist/lib/models/metaplex/validateSafetyDepositBoxV2';
+import { initAuctionManagerV2 } from '@oyster/common/dist/lib/models/metaplex/initAuctionManagerV2';
+import { cacheAuctionIndexer } from './cacheAuctionInIndexer';
 
 interface normalPattern {
   instructions: TransactionInstruction[];
@@ -85,6 +85,7 @@ interface byType {
   deprecatedValidateParticipation?: normalPattern;
   deprecatedBuildAndPopulateOneTimeAuthorizationAccount?: normalPattern;
   deprecatedPopulatePrintingTokens: arrayPattern;
+  cacheAuctionIndexer: arrayPattern;
 }
 
 export interface SafetyDepositDraft {
@@ -111,6 +112,7 @@ export async function createAuctionManager(
   safetyDepositDrafts: SafetyDepositDraft[],
   participationSafetyDepositDraft: SafetyDepositDraft | undefined,
   paymentMint: StringPublicKey,
+  storeIndexer: ParsedAccount<StoreIndexer>[],
 ): Promise<{
   vault: StringPublicKey;
   auction: StringPublicKey;
@@ -275,6 +277,14 @@ export async function createAuctionManager(
       instructions: populateInstr,
       signers: populateSigners,
     },
+    cacheAuctionIndexer: await cacheAuctionIndexer(
+      wallet,
+      vault,
+      auction,
+      auctionManager,
+      safetyDepositConfigs.map(s => s.draft.metadata.info.mint),
+      storeIndexer,
+    ),
   };
 
   const signers: Keypair[][] = [
@@ -292,6 +302,7 @@ export async function createAuctionManager(
     lookup.deprecatedValidateParticipation?.signers || [],
     ...lookup.validateBoxes.signers,
     lookup.startAuction.signers,
+    ...lookup.cacheAuctionIndexer.signers,
   ];
   const toRemoveSigners: Record<number, boolean> = {};
   let instructions: TransactionInstruction[][] = [
@@ -310,6 +321,7 @@ export async function createAuctionManager(
     lookup.deprecatedValidateParticipation?.instructions || [],
     ...lookup.validateBoxes.instructions,
     lookup.startAuction.instructions,
+    ...lookup.cacheAuctionIndexer.instructions,
   ].filter((instr, i) => {
     if (instr.length > 0) {
       return true;

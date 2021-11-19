@@ -6,6 +6,7 @@ import { PublicKey } from '@solana/web3.js';
 import BN from 'bn.js';
 import { WAD, ZERO } from '../constants';
 import { TokenInfo } from '@solana/spl-token-registry';
+import { useLocalStorage } from './useLocalStorage';
 
 export type KnownTokenMap = Map<string, TokenInfo>;
 
@@ -15,10 +16,15 @@ export const formatPriceNumber = new Intl.NumberFormat('en-US', {
   maximumFractionDigits: 8,
 });
 
-export function useLocalStorageState(key: string, defaultState?: string) {
+export function useLocalStorageState<T>(
+  key: string,
+  defaultState?: T,
+): [T, (key: string) => void] {
+  const localStorage = useLocalStorage();
   const [state, setState] = useState(() => {
-    // NOTE: Not sure if this is ok
+    console.debug('Querying local storage', key);
     const storedState = localStorage.getItem(key);
+    console.debug('Retrieved local storage', storedState);
     if (storedState) {
       return JSON.parse(storedState);
     }
@@ -52,6 +58,7 @@ export const findProgramAddress = async (
   seeds: (Buffer | Uint8Array)[],
   programId: PublicKey,
 ) => {
+  const localStorage = useLocalStorage();
   const key =
     'pda-' +
     seeds.reduce((agg, item) => agg + item.toString('hex'), '') +
@@ -217,6 +224,10 @@ const abbreviateNumber = (number: number, precision: number) => {
     const scale = Math.pow(10, tier * 3);
     scaled = number / scale;
   }
+  // Added this to remove unneeded decimals when abbreviating number
+  precision = Number.isInteger(scaled) ? 0 : precision;
+
+  //console.log("Number", scaled, precision)
 
   return scaled.toFixed(precision) + suffix;
 };
@@ -233,7 +244,7 @@ export function formatTokenAmount(
   rate: number = 1.0,
   prefix = '',
   suffix = '',
-  precision = 2,
+  precision = 3,
   abbr = false,
 ): string {
   if (!account) {

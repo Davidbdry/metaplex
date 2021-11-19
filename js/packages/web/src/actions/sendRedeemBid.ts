@@ -1,9 +1,7 @@
 import { Keypair, Connection, TransactionInstruction } from '@solana/web3.js';
 import {
-  actions,
   ParsedAccount,
   programIds,
-  models,
   TokenAccount,
   createMint,
   SafetyDepositBox,
@@ -25,11 +23,15 @@ import {
   StringPublicKey,
   toPublicKey,
   WalletSigner,
+  pubkeyToString,
+  WRAPPED_SOL_MINT,
 } from '@oyster/common';
 import { WalletNotConnectedError } from '@solana/wallet-adapter-base';
 import { AccountLayout, MintLayout, Token } from '@solana/spl-token';
-import { AuctionView, AuctionViewItem } from '../hooks';
+import { AuctionView } from '../hooks';
 import {
+  AuctionManagerV1,
+  ParticipationStateV1,
   WinningConfigType,
   NonWinningConstraint,
   redeemBid,
@@ -41,21 +43,18 @@ import {
   PrizeTrackingTicket,
   getPrizeTrackingTicket,
   BidRedemptionTicket,
-} from '../models/metaplex';
-import { claimBid } from '../models/metaplex/claimBid';
+  AuctionViewItem,
+} from '@oyster/common/dist/lib/models/metaplex/index';
+import { claimBid } from '@oyster/common/dist/lib/models/metaplex/claimBid';
+import { approve } from '@oyster/common/dist/lib/models/account';
+import { createTokenAccount } from '@oyster/common/dist/lib/actions/account';
 import { setupCancelBid } from './cancelBid';
-import { deprecatedPopulateParticipationPrintingAccount } from '../models/metaplex/deprecatedPopulateParticipationPrintingAccount';
-import { setupPlaceBid } from './sendPlaceBid';
+import { deprecatedPopulateParticipationPrintingAccount } from '@oyster/common/dist/lib/models/metaplex/deprecatedPopulateParticipationPrintingAccount';
+import { findAta, setupPlaceBid } from './sendPlaceBid';
 import { claimUnusedPrizes } from './claimUnusedPrizes';
 import { createMintAndAccountWithOne } from './createMintAndAccountWithOne';
 import { BN } from 'bn.js';
 import { QUOTE_MINT } from '../constants';
-import {
-  AuctionManagerV1,
-  ParticipationStateV1,
-} from '../models/metaplex/deprecatedStates';
-const { createTokenAccount } = actions;
-const { approve } = models;
 
 export function eligibleForParticipationPrizeGivenWinningIndex(
   winnerIndex: number | null,
@@ -126,7 +125,6 @@ export async function sendRedeemBid(
     winnerIndex = auctionView.auction.info.bidState.getWinnerIndex(
       auctionView.myBidderPot?.info.bidderAct,
     );
-  console.log('Winner index', winnerIndex);
 
   if (winnerIndex !== null) {
     // items is a prebuilt array of arrays where each entry represents one
@@ -223,6 +221,7 @@ export async function sendRedeemBid(
       wallet,
       signers,
       instructions,
+      connection,
     );
   }
 
@@ -770,14 +769,19 @@ export async function setupRedeemParticipationInstructions(
       console.log('Found token account', tokenAccount);
     }
 
-    const payingSolAccount = ensureWrappedAccount(
-      mintingInstructions,
-      cleanupInstructions,
-      tokenAccount,
-      wallet.publicKey,
-      price + accountRentExempt,
-      mintingSigners,
-    );
+    let receivingSolAccountOrAta = '';
+    if (auctionView.auction.info.tokenMint == WRAPPED_SOL_MINT.toBase58()) {
+      receivingSolAccountOrAta = ensureWrappedAccount(
+        mintingInstructions,
+        cleanupInstructions,
+        tokenAccount,
+        wallet.publicKey,
+        price + accountRentExempt,
+        mintingSigners,
+      );
+    } else {
+      receivingSolAccountOrAta = await findAta(auctionView, wallet, connection);
+    }
 
     instructions.push(mintingInstructions);
     signers.push(mintingSigners);
@@ -789,7 +793,7 @@ export async function setupRedeemParticipationInstructions(
     const transferAuthority = approve(
       myInstructions,
       cleanupInstructions,
-      toPublicKey(payingSolAccount),
+      toPublicKey(receivingSolAccountOrAta),
       wallet.publicKey,
       price,
     );
@@ -810,7 +814,7 @@ export async function setupRedeemParticipationInstructions(
       item.metadata.info.mint,
       transferAuthority.publicKey.toBase58(),
       auctionView.auctionManager.acceptPayment,
-      payingSolAccount,
+      pubkeyToString(receivingSolAccountOrAta),
       mint,
       me.info.supply.add(new BN(1)),
       winnerIndex != null && winnerIndex != undefined
@@ -962,19 +966,28 @@ async function deprecatedSetupRedeemParticipationInstructions(
           ? fixedPrice.toNumber()
           : auctionView.myBidderMetadata.info.lastBid.toNumber() || 0;
 
-      const payingSolAccount = ensureWrappedAccount(
-        winningPrizeInstructions,
-        cleanupInstructions,
-        tokenAccount,
-        wallet.publicKey,
-        price + accountRentExempt,
-        winningPrizeSigner,
-      );
+      let receivingSolAccountOrAta = '';
+      if (auctionView.auction.info.tokenMint == WRAPPED_SOL_MINT.toBase58()) {
+        receivingSolAccountOrAta = ensureWrappedAccount(
+          winningPrizeInstructions,
+          cleanupInstructions,
+          tokenAccount,
+          wallet.publicKey,
+          price + accountRentExempt,
+          winningPrizeSigner,
+        );
+      } else {
+        receivingSolAccountOrAta = await findAta(
+          auctionView,
+          wallet,
+          connection,
+        );
+      }
 
       const transferAuthority = approve(
         winningPrizeInstructions,
         cleanupInstructions,
-        toPublicKey(payingSolAccount),
+        toPublicKey(receivingSolAccountOrAta),
         wallet.publicKey,
         price,
       );
@@ -992,7 +1005,7 @@ async function deprecatedSetupRedeemParticipationInstructions(
         participationState.printingAuthorizationTokenAccount,
         transferAuthority.publicKey.toBase58(),
         auctionView.auctionManager.acceptPayment,
-        payingSolAccount,
+        receivingSolAccountOrAta,
       );
       newTokenBalance = 1;
       instructions.push([...winningPrizeInstructions, ...cleanupInstructions]);
